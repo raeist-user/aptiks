@@ -1182,16 +1182,6 @@ function stmSubmit() {
     sendAction({ type: 'submit', value: input.value.trim() });
 }
 
-// No shape/flag art bundled yet, so the "silhouette" is a masked letter
-// pattern instead (first letter shown, rest blanked) — playable without
-// spoiling the answer, and easy to swap for real art later.
-function maskCountry(name) {
-    let seenFirst = false;
-    return name.split('').map((c) => {
-        if (/[a-zA-Z]/.test(c)) { if (!seenFirst) { seenFirst = true; return c.toUpperCase(); } return '_'; }
-        return c;
-    }).join(' ');
-}
 const CountryUI = (() => {
     let timerInt = null;
     const clearTimer = () => { if (timerInt) clearInterval(timerInt); timerInt = null; };
@@ -1203,11 +1193,13 @@ const CountryUI = (() => {
         body.append(
             h('div', { id: 'gc-timer', class: 'text-center text-xs text-text-secondary mb-4' }),
             h('div', { id: 'gc-progress', class: 'text-center text-[11px] text-text-muted mb-2' }, '1 / ' + cfg.total),
-            h('div', { id: 'gc-mask', class: 'text-center text-2xl font-extrabold tracking-widest mb-6 min-h-[2.5rem]' }, '…'),
+            h('div', { id: 'gc-map', class: 'flex items-center justify-center mb-5 min-h-[220px]' },
+                h('img', { id: 'gc-map-img', alt: 'Which country is highlighted?', draggable: 'false', class: 'hidden w-full max-w-[300px] aspect-square select-none' }),
+                h('div', { id: 'gc-done', class: 'hidden text-center text-2xl font-extrabold' })),
             h('div', { class: 'flex gap-2' },
                 h('input', { id: 'gc-input', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', class: 'flex-1 bg-transparent border border-border-color rounded-xl px-4 py-3 text-base focus:outline-none focus:border-accent', placeholder: 'Name the country…', onkeydown: (e) => { if (e.key === 'Enter') gcSubmit(); } }),
                 h('button', { class: 'btn-press bg-accent text-app-bg font-bold px-5 rounded-xl', onclick: gcSubmit }, 'Go')),
-            h('p', { class: 'text-[11px] text-text-muted text-center mt-4' }, 'Map art is on the way — for now, guess from the letter pattern.'));
+            h('p', { class: 'text-[11px] text-text-muted text-center mt-4' }, 'Name the highlighted country.'));
     }
     function onEvent(type, data) {
         const g = matchState.gc;
@@ -1220,10 +1212,17 @@ const CountryUI = (() => {
                 if (left <= 0) clearTimer();
             }, 250);
         } else if (type === 'country') {
-            const mask = $('gc-mask'), prog = $('gc-progress'), input = $('gc-input');
+            const img = $('gc-map-img'), done = $('gc-done'), prog = $('gc-progress'), input = $('gc-input');
             if (prog) prog.textContent = Math.min(data.index + 1, data.total) + ' / ' + data.total;
-            if (data.code) { if (mask) mask.textContent = maskCountry(data.code); if (input) { input.value = ''; input.disabled = false; } }
-            else { if (mask) mask.textContent = "You've cleared the set!"; if (input) input.disabled = true; }
+            if (data.code) {
+                if (img) { img.src = '/api/maps/country/' + encodeURIComponent(data.code) + '.svg'; img.classList.remove('hidden'); }
+                if (done) done.classList.add('hidden');
+                if (input) { input.value = ''; input.disabled = false; input.focus(); }
+            } else {
+                if (img) img.classList.add('hidden');
+                if (done) { done.textContent = "You've cleared the set!"; done.classList.remove('hidden'); }
+                if (input) input.disabled = true;
+            }
         } else if (type === 'score') {
             g.counts[data.id] = data.count;
         }
