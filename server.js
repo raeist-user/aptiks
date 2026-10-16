@@ -14,6 +14,7 @@ const userRoutes = require('./src/userRoutes');
 const friendRoutes = require('./src/friendRoutes');
 const dmRoutes = require('./src/dmRoutes');
 const forumRoutes = require('./src/forumRoutes');
+const mapRoutes = require('./src/mapRoutes');
 const { verifyEmailSetup } = require('./src/emailService');
 const { notFound, errorHandler } = require('./src/errorMiddleware');
 const { socketAuth } = require('./src/socketAuth');
@@ -66,6 +67,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', time: new Date().toISOString() });
 });
+
+// Guess Country map pictures: no database needed, so mounted before the DB guard.
+app.use('/api/maps', mapRoutes);
 
 // Fail fast with a clear message if the DB isn't connected yet, instead of
 // letting requests hang until Mongoose's internal buffering timeout
