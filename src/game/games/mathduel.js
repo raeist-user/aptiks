@@ -25,7 +25,7 @@ const TOPIC_LABEL = {
 
 const TOTAL_QUESTIONS = 10;
 const LOCKOUT_MS = 1500;      // after a wrong answer
-const INTERMISSION_MS = 1300; // between questions
+const INTERMISSION_MS = 0;    // between questions: none, the next one starts the moment someone answers
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
 const SUP = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' };
@@ -275,6 +275,8 @@ class MathDuel extends BaseGame {
     if (Number.isNaN(val)) return;
     if (Math.abs(val - q.answer) < 1e-6) {
       this.closeQuestion(pid);
+    } else if (msg.live) {
+      return; // checked as they type: a half-typed number ("12" on the way to "120") is not a mistake, so no lockout
     } else {
       this.lockUntil[pid] = now + LOCKOUT_MS;
       this.env.emitTo(pid, 'wrong', { i: q.i, until: this.lockUntil[pid], serverTime: now });

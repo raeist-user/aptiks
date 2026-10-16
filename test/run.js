@@ -110,6 +110,59 @@ test('guesscountry: correct guess advances, wrong does not', () => {
   assert(env.finished);
 });
 
+test('guesscountry: skip needs every human; scores nothing; wrong guess is rejected', () => {
+  const env = new TestEnv(5);
+  const p1 = { id: 'h1' }, p2 = { id: 'h2' };
+  const g = new GuessCountry(env, { players: [p1, p2], level: 1000 });
+  g.begin();
+  g.handle('h1', { type: 'guess', value: 'zzz' });
+  assert(env.events.some((e) => e.type === 'reject' && e.to === 'h1'), 'wrong guess should be rejected back to the player');
+  g.handle('h1', { type: 'skip' });
+  assert.equal(g.index['h1'], 0, 'one vote must not skip');
+  g.handle('h2', { type: 'skip' });
+  assert.equal(g.index['h1'], 1); assert.equal(g.index['h2'], 1);
+  assert.equal(g.score['h1'], 0, 'skipping must not score');
+});
+test('guesscountry: skip is satisfied when the other player already solved that map; bots never block', () => {
+  const env = new TestEnv(6);
+  const g = new GuessCountry(env, { players: [{ id: 'h1' }, { id: 'h2' }], level: 1000 });
+  g.begin();
+  g.handle('h1', { type: 'skip' });                              // h1 waits on map 0
+  g.handle('h2', { type: 'guess', value: g.current('h2').name }); // h2 solves map 0 -> h1 is released
+  assert.equal(g.index['h1'], 1);
+  const env2 = new TestEnv(7);
+  const g2 = new GuessCountry(env2, { players: [{ id: 'h1' }, { id: 'b1', isBot: true, rating: 1000 }], level: 1000 });
+  g2.begin();
+  g2.handle('h1', { type: 'skip' });
+  assert.equal(g2.index['h1'], 1, 'a human vs a bot can skip alone');
+});
+
+test('guesscountry: skip needs a majority (2 of 3); the answer is sent back', () => {
+  const env = new TestEnv(8);
+  const g = new GuessCountry(env, { players: [{ id: 'a' }, { id: 'b' }, { id: 'c' }], level: 1000 });
+  g.begin();
+  const name = g.current('a').name;
+  g.handle('a', { type: 'skip' });
+  assert.equal(g.index['a'], 0, '1 of 3 is not enough');
+  g.handle('b', { type: 'skip' });
+  assert.equal(g.index['a'], 1); assert.equal(g.index['b'], 1);
+  assert.equal(g.index['c'], 1, 'everyone on that map moves on');
+  const ev = env.events.filter((e) => e.type === 'country' && e.to === 'a').pop();
+  assert.deepEqual(ev.data.prev, { name, how: 'skipped' });
+});
+test('mathduel: a live (as-you-type) check ends the question when right, never locks out when wrong', () => {
+  const env = new TestEnv(11);
+  const g = new MathDuel(env, { players: [{ id: 'h1', rating: 1000 }, { id: 'h2', rating: 1000 }], level: 1000 });
+  g.begin();
+  const q = g.q;
+  g.handle('h1', { type: 'answer', i: q.i, value: String(q.answer + 7), live: true });
+  assert.equal(g.lockUntil['h1'], 0, 'live wrong answers must not lock out');
+  g.handle('h1', { type: 'answer', i: q.i, value: String(q.answer), live: true });
+  assert.equal(g.scores['h1'], 1);
+  env.advance(0);
+  assert.equal(g.q.i, 1, 'next question starts straight away');
+});
+
 // ── WikiRace with a mock wiki graph (offline)
 const tick = () => new Promise((r) => setImmediate(r));
 async function testWikiRace() {

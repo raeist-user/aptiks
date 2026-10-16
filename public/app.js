@@ -474,13 +474,11 @@ const GAME_DEFS = [
         id: 'wpmduel', label: 'WPM Duel', icon: 'keyboard', blurb: 'Type fast and clean.', grid: true,
         modes: [{ id: 'paragraph', label: 'Paragraph · 30s' }, { id: 'sentence', label: '10 Sentences' }],
     },
+    { id: 'guesscountry', label: 'Guess Country', icon: 'globe', blurb: 'Same countries for everyone. Race the clock.', grid: true },
     {
-        id: 'spellthemost', label: 'Spell the Most', icon: 'list-checks', blurb: 'Name as many as you can in 60s.', grid: true,
-        categories: [{ id: '', label: 'Random' }, { id: 'animals', label: 'Animals' }, { id: 'presidents', label: 'US Presidents' }, { id: 'countries', label: 'Countries' }, { id: 'fastfood', label: 'Fast Food' },
-            // Guess Country lives here now: picking this launches the map game instead of a word list.
-            { id: '__maps', label: '🗺 Country Maps', game: 'guesscountry', blurb: 'Name the highlighted country on the globe. Skip with everyone’s OK.' }],
+        id: 'spellthemost', label: 'Spell the Most', icon: 'list-checks', blurb: 'Name as many as you can in 60s.', grid: false,
+        categories: [{ id: '', label: 'Random' }, { id: 'animals', label: 'Animals' }, { id: 'presidents', label: 'US Presidents' }, { id: 'countries', label: 'Countries' }, { id: 'fastfood', label: 'Fast Food' }],
     },
-    { id: 'guesscountry', label: 'Guess Country', icon: 'globe', blurb: 'Same countries for everyone. Race the clock.', grid: false, hidden: true }, // reached through Spell the Most → Country Maps
     { id: 'wikirace', label: 'Wiki Race', icon: 'route', blurb: 'Click your way from the start page to the target.', grid: false },
 ];
 const gameDef = (id) => GAME_DEFS.find((g) => g.id === id);
@@ -529,7 +527,7 @@ function renderHomeGames() {
     GAME_DEFS.filter((g) => g.grid).forEach((g) => grid.append(gameTile(g)));
     const other = $('home-other-games');
     other.textContent = '';
-    GAME_DEFS.filter((g) => !g.grid && !g.hidden).forEach((g) => other.append(gameTileWide(g)));
+    GAME_DEFS.filter((g) => !g.grid).forEach((g) => other.append(gameTileWide(g)));
     icons();
 }
 function gameTile(g) {
@@ -577,15 +575,12 @@ function openGameSheet(id) {
                         onclick: () => { categoryId = c.id; draw(); },
                     }, c.label))));
             }
-            const picked = def.categories && def.categories.find((c) => c.id === categoryId);
-            const launchId = (picked && picked.game) || id; // "Country Maps" starts the map game
-            if (picked && picked.game) body.append(h('p', { class: 'text-xs text-text-secondary mt-3' }, picked.blurb));
             const settings = {};
             if (mode) settings.mode = mode;
-            if (categoryId && !(picked && picked.game)) settings.categoryId = categoryId;
+            if (categoryId) settings.categoryId = categoryId;
             body.append(h('div', { class: 'mt-5' }, partyState
-                ? h('button', { class: 'btn-press w-full bg-accent text-app-bg font-bold text-sm py-3 rounded-xl', onclick: () => { dismissOverlay(); startPartyGame(launchId, settings); } }, 'Start for Party')
-                : h('button', { class: 'btn-press w-full bg-accent text-app-bg font-bold text-sm py-3 rounded-xl', onclick: () => { dismissOverlay(); quickMatch(launchId, settings); } }, 'Quick Match')));
+                ? h('button', { class: 'btn-press w-full bg-accent text-app-bg font-bold text-sm py-3 rounded-xl', onclick: () => { dismissOverlay(); startPartyGame(id, settings); } }, 'Start for Party')
+                : h('button', { class: 'btn-press w-full bg-accent text-app-bg font-bold text-sm py-3 rounded-xl', onclick: () => { dismissOverlay(); quickMatch(id, settings); } }, 'Quick Match')));
             icons();
         };
         draw();
@@ -820,16 +815,17 @@ function renderScoreboard() {
     }
     box.textContent = '';
     box.dataset.key = key;
+    // Slim strip: small avatar + name + score side by side, so the game itself gets the screen.
+    box.className = 'flex-shrink-0 flex items-center gap-2 px-3 py-2 overflow-x-auto border-b border-border-color';
     const twoPlayer = matchState.players.length <= 2;
-    const avatarSize = twoPlayer ? 'w-14 h-14' : 'w-11 h-11';
     matchState.players.forEach((p) => {
         const mine = currentUser && p.id === currentUser._id;
-        box.append(h('div', { class: 'flex flex-col items-center gap-1.5 shrink-0' + (twoPlayer ? ' flex-1' : ' w-[74px]') },
-            h('div', { class: 'rounded-full p-[2px] ' + (mine ? 'bg-accent' : 'bg-border-color') },
-                avatarEl(p, avatarSize, twoPlayer ? 'text-base' : 'text-xs')),
-            h('div', { class: (twoPlayer ? 'text-sm' : 'text-[11px]') + ' font-bold truncate max-w-full text-center' }, (p.displayName || p.username || '?') + (p.isBot ? ' 🤖' : '')),
-            p.rating != null ? h('div', { class: 'text-[10px] text-text-muted -mt-1' }, String(p.rating)) : null,
-            h('div', { 'data-score': p.id, class: 'text-xs font-extrabold text-accent bg-white/5 px-2 py-0.5 rounded-full' }, valueOf(p))));
+        box.append(h('div', { class: 'flex items-center gap-2 min-w-0 ' + (twoPlayer ? 'flex-1' : 'shrink-0 w-[132px]') },
+            h('div', { class: 'rounded-full p-[2px] shrink-0 ' + (mine ? 'bg-accent' : 'bg-border-color') }, avatarEl(p, 'w-8 h-8', 'text-xs')),
+            h('div', { class: 'min-w-0 flex-1' },
+                h('div', { class: 'text-xs font-bold truncate leading-tight' }, (p.displayName || p.username || '?') + (p.isBot ? ' 🤖' : '')),
+                p.rating != null ? h('div', { class: 'text-[10px] text-text-muted leading-tight' }, String(p.rating)) : null),
+            h('div', { 'data-score': p.id, class: 'text-xs font-extrabold text-accent bg-white/5 px-2 py-0.5 rounded-full shrink-0' }, valueOf(p))));
     });
 }
 const medalFor = (rank) => (rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : null);
@@ -920,10 +916,14 @@ const MathDuelUI = (() => {
     let locked = true; // true whenever there's no live question to answer yet
     let keydownHandler = null;
     const clearTimer = () => { if (timerInt) clearInterval(timerInt); timerInt = null; };
+    // Every keypress is sent as a live check: the server accepts it the instant it is right, and ignores it if not.
+    // Only after a pause in typing does it count as a real attempt (a wrong one locks you out briefly), so "12" on
+    // the way to "120" is never punished.
+    const liveCheck = () => { if (!locked && value && matchState.md.q) sendAction({ type: 'answer', i: matchState.md.q.i, value, live: true }); };
     const tryAnswer = debounce(() => {
         if (locked || !value || !matchState.md.q) return;
         sendAction({ type: 'answer', i: matchState.md.q.i, value });
-    }, 450); // waits for a pause in typing so "12" isn't submitted (and locked out) while aiming for "120"
+    }, 450);
 
     function renderDisplay() {
         const d = $('md-display');
@@ -938,6 +938,7 @@ const MathDuelUI = (() => {
         else if (k === '-') value = value.startsWith('-') ? value.slice(1) : '-' + value;
         else if (value.replace('-', '').length < 9) value += k;
         renderDisplay();
+        liveCheck();
         tryAnswer();
     }
     function keypad() {
@@ -983,7 +984,6 @@ const MathDuelUI = (() => {
             $('md-question').classList.remove('hidden');
             $('md-topic-label').textContent = data.topic + '  ·  Q' + (data.i + 1) + '/' + data.total;
             $('md-prompt').textContent = data.prompt;
-            $('md-feedback').textContent = '';
             renderDisplay();
             clearTimer();
             timerInt = setInterval(() => {
@@ -1203,24 +1203,22 @@ const CountryUI = (() => {
     let timerInt = null, flashT = null;
     const clearTimer = () => { if (timerInt) clearInterval(timerInt); timerInt = null; if (flashT) clearTimeout(flashT); flashT = null; };
     const prefetch = (code) => { if (code) { const i = new Image(); i.src = '/api/maps/country/' + encodeURIComponent(code) + '.svg'; } };
-    function feedback(text, cls) {
+    // Messages sit at the TOP: the phone keyboard covers the bottom of the screen.
+    function feedback(text, cls, ms) {
         const el = $('gc-feedback'); if (!el) return;
         el.textContent = text;
-        el.className = 'text-center text-sm font-semibold h-5 mt-3 ' + cls;
+        el.className = 'text-center text-sm font-semibold h-6 mb-2 truncate ' + cls;
         if (flashT) clearTimeout(flashT);
-        flashT = setTimeout(() => { const e = $('gc-feedback'); if (e) e.textContent = ''; }, 1600);
+        flashT = setTimeout(() => { const e = $('gc-feedback'); if (e) e.textContent = ''; }, ms || 2200);
     }
     function paintSkip(info) {
         const btn = $('gc-skip'); if (!btn) return;
-        const g = matchState.gc;
-        g.skip = info;
-        if (!info) { btn.disabled = true; return; }
-        const others = info.have - (info.voted ? 1 : 0);
+        matchState.gc.skip = info;
+        if (!info) { btn.classList.add('hidden'); return; }
+        btn.classList.remove('hidden');
+        btn.textContent = `Skip ${info.have}/${info.total}`;
         btn.disabled = !!info.voted;
-        btn.classList.toggle('opacity-50', !!info.voted);
-        btn.textContent = info.voted
-            ? (info.need > 1 ? `Waiting for others… ${info.have}/${info.need}` : 'Skipping…')
-            : (others > 0 ? `Skip · ${others} want to skip (${info.have}/${info.need})` : (info.need > 1 ? `Skip (0/${info.need})` : 'Skip'));
+        btn.className = 'btn-press text-[11px] font-bold px-2.5 py-1 rounded-full border ' + (info.voted ? 'border-accent/50 text-accent' : 'border-border-color text-text-secondary');
     }
     function init() {
         const cfg = matchState.init;
@@ -1228,16 +1226,16 @@ const CountryUI = (() => {
         const body = $('match-body');
         body.textContent = '';
         body.append(
-            h('div', { id: 'gc-timer', class: 'text-center text-xs text-text-secondary mb-4' }),
-            h('div', { id: 'gc-progress', class: 'text-center text-[11px] text-text-muted mb-2' }, '1 / ' + cfg.total),
-            h('div', { id: 'gc-map', class: 'flex items-center justify-center mb-3 min-h-[220px]' },
-                h('img', { id: 'gc-map-img', alt: 'Which country is highlighted?', draggable: 'false', class: 'hidden w-full max-w-[300px] aspect-square select-none' }),
+            h('div', { class: 'flex items-center justify-between mb-1' },
+                h('div', { class: 'text-[11px] text-text-muted' }, h('span', { id: 'gc-progress' }, '1 / ' + cfg.total), ' · ', h('span', { id: 'gc-timer' })),
+                h('button', { id: 'gc-skip', class: 'hidden', onclick: gcSkip }, 'Skip')),
+            h('div', { id: 'gc-feedback', class: 'text-center text-sm font-semibold h-6 mb-2' }),
+            h('div', { id: 'gc-map', class: 'flex items-center justify-center mb-3 min-h-[200px]' },
+                h('img', { id: 'gc-map-img', alt: 'Which country is highlighted?', draggable: 'false', class: 'hidden w-full max-w-[260px] aspect-square select-none' }),
                 h('div', { id: 'gc-done', class: 'hidden text-center text-2xl font-extrabold' })),
             h('div', { class: 'flex gap-2' },
                 h('input', { id: 'gc-input', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', class: 'flex-1 bg-transparent border border-border-color rounded-xl px-4 py-3 text-base focus:outline-none focus:border-accent', placeholder: 'Name the country…', onkeydown: (e) => { if (e.key === 'Enter') gcSubmit(); } }),
-                h('button', { class: 'btn-press bg-accent text-app-bg font-bold px-5 rounded-xl', onclick: gcSubmit }, 'Go')),
-            h('div', { id: 'gc-feedback', class: 'text-center text-sm font-semibold h-5 mt-3' }),
-            h('button', { id: 'gc-skip', class: 'btn-press w-full mt-2 text-xs font-bold text-text-secondary border border-border-color rounded-xl py-2.5', onclick: gcSkip }, 'Skip'));
+                h('button', { class: 'btn-press bg-accent text-app-bg font-bold px-5 rounded-xl', onclick: gcSubmit }, 'Go')));
     }
     function onEvent(type, data) {
         const g = matchState.gc;
@@ -1250,38 +1248,39 @@ const CountryUI = (() => {
                 if (left <= 0) clearTimer();
             }, 250);
         } else if (type === 'country') {
-            const img = $('gc-map-img'), done = $('gc-done'), prog = $('gc-progress'), input = $('gc-input'), skip = $('gc-skip');
+            const img = $('gc-map-img'), done = $('gc-done'), prog = $('gc-progress'), input = $('gc-input');
             g.pos = data.index;
             if (prog) prog.textContent = Math.min(data.index + 1, data.total) + ' / ' + data.total;
+            if (data.prev) {
+                if (data.prev.how === 'correct') feedback('✓ Correct — ' + data.prev.name, 'text-online');
+                else feedback('Skipped — it was ' + data.prev.name, 'text-accent', 3500);
+            }
             if (data.code) {
                 if (img) { img.src = '/api/maps/country/' + encodeURIComponent(data.code) + '.svg'; img.classList.remove('hidden'); }
                 if (done) done.classList.add('hidden');
                 if (input) { input.value = ''; input.disabled = false; input.focus(); }
-                if (skip) skip.classList.remove('hidden');
                 paintSkip(data.skip);
                 prefetch(data.next); // so the next map is already there after a correct guess / skip
             } else {
                 if (img) img.classList.add('hidden');
                 if (done) { done.textContent = "You've reached the end of the set!"; done.classList.remove('hidden'); }
                 if (input) input.disabled = true;
-                if (skip) skip.classList.add('hidden');
+                paintSkip(null);
             }
         } else if (type === 'score') {
             g.counts[data.id] = data.count;
-            if (currentUser && data.id === currentUser._id) feedback('✓ Correct!', 'text-online');
         } else if (type === 'reject') {
-            feedback('✗ Not ' + data.value + ' — try again', 'text-red-400');
+            feedback('✗ Not ' + data.value + ' — try again', 'text-red-400', 1800);
             const input = $('gc-input');
             if (input) {
                 input.classList.add('border-red-400');
                 input.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-6px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(0)' }], { duration: 220 });
                 setTimeout(() => { const i = $('gc-input'); if (i) i.classList.remove('border-red-400'); }, 600);
-                input.select();
             }
         } else if (type === 'skipvote') {
             if (data.pos !== g.pos) return; // someone else's map, not the one I'm on
             const mine = currentUser && data.id === currentUser._id;
-            paintSkip({ pos: data.pos, have: data.have, need: data.need, voted: mine ? true : !!(g.skip && g.skip.voted) });
+            paintSkip({ pos: data.pos, have: data.have, total: data.total, need: data.need, voted: mine ? true : !!(g.skip && g.skip.voted) });
         }
     }
     function scoreboardValue(id) { return String((matchState.gc && matchState.gc.counts[id]) || 0); }

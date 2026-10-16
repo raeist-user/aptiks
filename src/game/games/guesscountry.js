@@ -5,9 +5,9 @@
 // the match for everyone at once; the live scoreboard is just each player's
 // solved count, which is what makes the race visible ("who's ahead").
 //
-// Skip: stuck on a map? Press Skip. A map is only skipped when every human
-// still playing has either voted to skip it or already moved past it (bots
-// never block). Skipping scores nothing — it just moves you on.
+// Skip: stuck on a map? Press Skip. A map is skipped once more than half of the
+// players agree (2/2, 2/3, 3/4, 3/5 ...); bots always agree. Skipping scores
+// nothing — it just moves you on, and the answer is shown.
 const BaseGame = require('../BaseGame');
 const { shuffle } = require('../util');
 const { normalize } = require('./spellthemost');
@@ -54,34 +54,45 @@ class GuessCountry extends BaseGame {
     for (const b of this.bots) this.botPlay(b);
   }
 
-  sendCurrent(pid) {
+  // `prev` = what just happened to the map they were on ({ name, how: 'correct' | 'skipped' }), so the UI can show the answer.
+  sendCurrent(pid, prev = null) {
     const c = this.current(pid);
     const next = this.sequence[this.index[pid] + 1];
     // "code" is the ISO alpha-2 code; the frontend loads the themed globe from /api/maps/country/<code>.svg.
     // "next" lets the browser fetch the following map ahead of time so there is no wait after a correct guess.
     this.env.emitTo(pid, 'country', {
       index: this.index[pid], total: this.sequence.length, code: c ? c.code : null, next: next ? next.code : null,
-      skip: c ? this.skipState(this.index[pid], pid) : null,
+      skip: c ? this.skipState(this.index[pid], pid) : null, prev,
     });
   }
 
-  // How the skip button should look for map `pos`: how many humans agree, how many are needed, and whether `pid` already voted.
+  // Skip rule: a map is skipped once MORE THAN HALF of the players in the match agree (2 of 2, 2 of 3, 3 of 4, 3 of 5 ...).
+  // A human who already moved past the map counts as agreeing. Bots always agree (once a human has asked), so against
+  // bots a skip goes through straight away.
   skipState(pos, pid) {
-    const humans = this.humans.filter((p) => !this.isForfeited(p.id));
+    const active = this.players.filter((p) => !this.isForfeited(p.id));
+    const humans = active.filter((p) => !p.isBot);
+    const bots = active.length - humans.length;
     const votes = this.skipVotes.get(pos) || new Set();
-    const have = humans.filter((p) => votes.has(p.id) || this.index[p.id] > pos).length;
-    return { pos, have, need: Math.max(1, humans.length), voted: pid ? votes.has(pid) : false };
+    const humanHave = humans.filter((p) => votes.has(p.id) || this.index[p.id] > pos).length;
+    const total = Math.max(1, active.length);
+    return {
+      pos, total, need: Math.floor(total / 2) + 1,
+      have: humanHave + (humanHave > 0 ? bots : 0),
+      voted: pid ? votes.has(pid) : false,
+    };
   }
 
-  // Skip a map when every human still playing voted for it or is already past it.
   checkSkips() {
     for (const [pos, votes] of [...this.skipVotes]) {
-      const humans = this.humans.filter((p) => !this.isForfeited(p.id));
-      const agreed = humans.length > 0 && humans.every((p) => votes.has(p.id) || this.index[p.id] > pos);
-      if (!agreed) continue;
+      const st = this.skipState(pos);
+      if (st.have < st.need) continue;
       this.skipVotes.delete(pos);
-      for (const p of humans) {
-        if (this.index[p.id] === pos && votes.has(p.id)) { this.index[p.id]++; this.sendCurrent(p.id); }
+      const name = this.sequence[pos].name;
+      for (const p of this.humans) {
+        if (this.isForfeited(p.id) || this.index[p.id] !== pos) continue;
+        this.index[p.id]++;
+        this.sendCurrent(p.id, { name, how: 'skipped' });
       }
     }
   }
@@ -110,8 +121,8 @@ class GuessCountry extends BaseGame {
     this.score[pid]++;
     this.solvedAt[pid] = this.env.now() - this.startedAt;
     this.env.emit('score', { id: pid, count: this.score[pid] });
-    this.sendCurrent(pid); // sends code:null when they've run out; they wait for time to end
-    this.checkSkips();     // someone waiting on this map may now be free to skip
+    this.sendCurrent(pid, { name: want.name, how: 'correct' }); // code:null when they've run out; they wait for time to end
+    this.checkSkips(); // someone waiting on this map may now be free to skip
   }
 
   // ── Bots ─────────────────────────────────────────────────────────────────
