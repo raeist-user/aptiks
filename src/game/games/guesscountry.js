@@ -6,12 +6,17 @@
 // current index, which is what makes the race visible ("who's ahead").
 const BaseGame = require('../BaseGame');
 const { shuffle } = require('../util');
-const { CATEGORIES } = require('../data/categories');
 const { normalize } = require('./spellthemost');
+const { countriesForMode } = require('../data/countries');
+const { availableCodes } = require('../geoMap');
 
 const DURATION_MS = 90000;
 const SEQUENCE_LENGTH = 40;
-const COUNTRIES = CATEGORIES.find((c) => c.id === 'countries').items;
+// Same country list and difficulty tiers as the Discord bot ('easy' | 'medium' | 'hard').
+// 'medium' = famous + reasonably known countries; 'hard' = every country with a shape.
+const MODE = 'medium';
+const HAVE_SHAPE = availableCodes();
+const COUNTRIES = countriesForMode(MODE).filter((c) => HAVE_SHAPE.has(c.code));
 
 class GuessCountry extends BaseGame {
   constructor(env, opts) {
@@ -45,9 +50,8 @@ class GuessCountry extends BaseGame {
 
   sendCurrent(pid) {
     const c = this.current(pid);
-    // "code" is just the sequence position; the frontend maps it to a
-    // shape/flag from its own country-geometry data, not sent here.
-    this.env.emitTo(pid, 'country', { index: this.index[pid], total: this.sequence.length, code: c ? c.name : null });
+    // "code" is the ISO alpha-2 code; the frontend loads the themed globe from /api/maps/country/<code>.svg.
+    this.env.emitTo(pid, 'country', { index: this.index[pid], total: this.sequence.length, code: c ? c.code : null });
   }
 
   handle(pid, msg) {
