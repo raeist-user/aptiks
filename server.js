@@ -123,6 +123,8 @@ httpServer.listen(PORT, () => {
   // Report email status in the logs right away so a misconfigured SMTP
   // setup is obvious at deploy time, not when a user first needs a reset.
   verifyEmailSetup();
+  // Draw the Guess Country maps now (in the background) so nobody waits for the first render.
+  require('./src/game/geoMap').warmUp(require('./src/game/games/guesscountry').codes);
 });
 
 // Surface anything that would otherwise crash the process silently

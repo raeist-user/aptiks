@@ -476,9 +476,11 @@ const GAME_DEFS = [
     },
     {
         id: 'spellthemost', label: 'Spell the Most', icon: 'list-checks', blurb: 'Name as many as you can in 60s.', grid: true,
-        categories: [{ id: '', label: 'Random' }, { id: 'animals', label: 'Animals' }, { id: 'presidents', label: 'US Presidents' }, { id: 'countries', label: 'Countries' }, { id: 'fastfood', label: 'Fast Food' }],
+        categories: [{ id: '', label: 'Random' }, { id: 'animals', label: 'Animals' }, { id: 'presidents', label: 'US Presidents' }, { id: 'countries', label: 'Countries' }, { id: 'fastfood', label: 'Fast Food' },
+            // Guess Country lives here now: picking this launches the map game instead of a word list.
+            { id: '__maps', label: '🗺 Country Maps', game: 'guesscountry', blurb: 'Name the highlighted country on the globe. Skip with everyone’s OK.' }],
     },
-    { id: 'guesscountry', label: 'Guess Country', icon: 'globe', blurb: 'Same countries for everyone. Race the clock.', grid: false },
+    { id: 'guesscountry', label: 'Guess Country', icon: 'globe', blurb: 'Same countries for everyone. Race the clock.', grid: false, hidden: true }, // reached through Spell the Most → Country Maps
     { id: 'wikirace', label: 'Wiki Race', icon: 'route', blurb: 'Click your way from the start page to the target.', grid: false },
 ];
 const gameDef = (id) => GAME_DEFS.find((g) => g.id === id);
@@ -527,7 +529,7 @@ function renderHomeGames() {
     GAME_DEFS.filter((g) => g.grid).forEach((g) => grid.append(gameTile(g)));
     const other = $('home-other-games');
     other.textContent = '';
-    GAME_DEFS.filter((g) => !g.grid).forEach((g) => other.append(gameTileWide(g)));
+    GAME_DEFS.filter((g) => !g.grid && !g.hidden).forEach((g) => other.append(gameTileWide(g)));
     icons();
 }
 function gameTile(g) {
@@ -575,12 +577,15 @@ function openGameSheet(id) {
                         onclick: () => { categoryId = c.id; draw(); },
                     }, c.label))));
             }
+            const picked = def.categories && def.categories.find((c) => c.id === categoryId);
+            const launchId = (picked && picked.game) || id; // "Country Maps" starts the map game
+            if (picked && picked.game) body.append(h('p', { class: 'text-xs text-text-secondary mt-3' }, picked.blurb));
             const settings = {};
             if (mode) settings.mode = mode;
-            if (categoryId) settings.categoryId = categoryId;
+            if (categoryId && !(picked && picked.game)) settings.categoryId = categoryId;
             body.append(h('div', { class: 'mt-5' }, partyState
-                ? h('button', { class: 'btn-press w-full bg-accent text-app-bg font-bold text-sm py-3 rounded-xl', onclick: () => { dismissOverlay(); startPartyGame(id, settings); } }, 'Start for Party')
-                : h('button', { class: 'btn-press w-full bg-accent text-app-bg font-bold text-sm py-3 rounded-xl', onclick: () => { dismissOverlay(); quickMatch(id, settings); } }, 'Quick Match')));
+                ? h('button', { class: 'btn-press w-full bg-accent text-app-bg font-bold text-sm py-3 rounded-xl', onclick: () => { dismissOverlay(); startPartyGame(launchId, settings); } }, 'Start for Party')
+                : h('button', { class: 'btn-press w-full bg-accent text-app-bg font-bold text-sm py-3 rounded-xl', onclick: () => { dismissOverlay(); quickMatch(launchId, settings); } }, 'Quick Match')));
             icons();
         };
         draw();
@@ -800,21 +805,32 @@ function renderScoreboard() {
     if (!matchState) return;
     const box = $('match-scoreboard');
     if (!box) return;
-    box.textContent = '';
     const ui = GAME_UI[matchState.gameId];
+    const valueOf = (p) => (ui && ui.scoreboardValue ? ui.scoreboardValue(p.id) : '');
+    // Same match, same players: just update the numbers. Rebuilding the avatars and
+    // re-scanning the page for icons on every game event is what made games lag.
+    const key = matchState.matchId + ':' + matchState.players.map((p) => p.id).join(',');
+    if (box.dataset.key === key) {
+        matchState.players.forEach((p) => {
+            const el = box.querySelector('[data-score="' + p.id + '"]');
+            const v = valueOf(p);
+            if (el && el.textContent !== v) el.textContent = v;
+        });
+        return;
+    }
+    box.textContent = '';
+    box.dataset.key = key;
     const twoPlayer = matchState.players.length <= 2;
     const avatarSize = twoPlayer ? 'w-14 h-14' : 'w-11 h-11';
     matchState.players.forEach((p) => {
         const mine = currentUser && p.id === currentUser._id;
-        const val = ui && ui.scoreboardValue ? ui.scoreboardValue(p.id) : '';
         box.append(h('div', { class: 'flex flex-col items-center gap-1.5 shrink-0' + (twoPlayer ? ' flex-1' : ' w-[74px]') },
             h('div', { class: 'rounded-full p-[2px] ' + (mine ? 'bg-accent' : 'bg-border-color') },
                 avatarEl(p, avatarSize, twoPlayer ? 'text-base' : 'text-xs')),
             h('div', { class: (twoPlayer ? 'text-sm' : 'text-[11px]') + ' font-bold truncate max-w-full text-center' }, (p.displayName || p.username || '?') + (p.isBot ? ' 🤖' : '')),
             p.rating != null ? h('div', { class: 'text-[10px] text-text-muted -mt-1' }, String(p.rating)) : null,
-            h('div', { class: 'text-xs font-extrabold text-accent bg-white/5 px-2 py-0.5 rounded-full' }, val)));
+            h('div', { 'data-score': p.id, class: 'text-xs font-extrabold text-accent bg-white/5 px-2 py-0.5 rounded-full' }, valueOf(p))));
     });
-    icons();
 }
 const medalFor = (rank) => (rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : null);
 function deltaBadge(delta) {
@@ -826,6 +842,7 @@ function deltaBadge(delta) {
 }
 function renderResults(rankings, deltas, aborted) {
     $('match-scoreboard').textContent = '';
+    delete $('match-scoreboard').dataset.key;
     const body = $('match-body');
     body.textContent = '';
     if (aborted) {
@@ -1183,23 +1200,44 @@ function stmSubmit() {
 }
 
 const CountryUI = (() => {
-    let timerInt = null;
-    const clearTimer = () => { if (timerInt) clearInterval(timerInt); timerInt = null; };
+    let timerInt = null, flashT = null;
+    const clearTimer = () => { if (timerInt) clearInterval(timerInt); timerInt = null; if (flashT) clearTimeout(flashT); flashT = null; };
+    const prefetch = (code) => { if (code) { const i = new Image(); i.src = '/api/maps/country/' + encodeURIComponent(code) + '.svg'; } };
+    function feedback(text, cls) {
+        const el = $('gc-feedback'); if (!el) return;
+        el.textContent = text;
+        el.className = 'text-center text-sm font-semibold h-5 mt-3 ' + cls;
+        if (flashT) clearTimeout(flashT);
+        flashT = setTimeout(() => { const e = $('gc-feedback'); if (e) e.textContent = ''; }, 1600);
+    }
+    function paintSkip(info) {
+        const btn = $('gc-skip'); if (!btn) return;
+        const g = matchState.gc;
+        g.skip = info;
+        if (!info) { btn.disabled = true; return; }
+        const others = info.have - (info.voted ? 1 : 0);
+        btn.disabled = !!info.voted;
+        btn.classList.toggle('opacity-50', !!info.voted);
+        btn.textContent = info.voted
+            ? (info.need > 1 ? `Waiting for others… ${info.have}/${info.need}` : 'Skipping…')
+            : (others > 0 ? `Skip · ${others} want to skip (${info.have}/${info.need})` : (info.need > 1 ? `Skip (0/${info.need})` : 'Skip'));
+    }
     function init() {
         const cfg = matchState.init;
-        matchState.gc = { counts: {} };
+        matchState.gc = { counts: {}, pos: 0, skip: null };
         const body = $('match-body');
         body.textContent = '';
         body.append(
             h('div', { id: 'gc-timer', class: 'text-center text-xs text-text-secondary mb-4' }),
             h('div', { id: 'gc-progress', class: 'text-center text-[11px] text-text-muted mb-2' }, '1 / ' + cfg.total),
-            h('div', { id: 'gc-map', class: 'flex items-center justify-center mb-5 min-h-[220px]' },
+            h('div', { id: 'gc-map', class: 'flex items-center justify-center mb-3 min-h-[220px]' },
                 h('img', { id: 'gc-map-img', alt: 'Which country is highlighted?', draggable: 'false', class: 'hidden w-full max-w-[300px] aspect-square select-none' }),
                 h('div', { id: 'gc-done', class: 'hidden text-center text-2xl font-extrabold' })),
             h('div', { class: 'flex gap-2' },
                 h('input', { id: 'gc-input', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', class: 'flex-1 bg-transparent border border-border-color rounded-xl px-4 py-3 text-base focus:outline-none focus:border-accent', placeholder: 'Name the country…', onkeydown: (e) => { if (e.key === 'Enter') gcSubmit(); } }),
                 h('button', { class: 'btn-press bg-accent text-app-bg font-bold px-5 rounded-xl', onclick: gcSubmit }, 'Go')),
-            h('p', { class: 'text-[11px] text-text-muted text-center mt-4' }, 'Name the highlighted country.'));
+            h('div', { id: 'gc-feedback', class: 'text-center text-sm font-semibold h-5 mt-3' }),
+            h('button', { id: 'gc-skip', class: 'btn-press w-full mt-2 text-xs font-bold text-text-secondary border border-border-color rounded-xl py-2.5', onclick: gcSkip }, 'Skip'));
     }
     function onEvent(type, data) {
         const g = matchState.gc;
@@ -1212,19 +1250,38 @@ const CountryUI = (() => {
                 if (left <= 0) clearTimer();
             }, 250);
         } else if (type === 'country') {
-            const img = $('gc-map-img'), done = $('gc-done'), prog = $('gc-progress'), input = $('gc-input');
+            const img = $('gc-map-img'), done = $('gc-done'), prog = $('gc-progress'), input = $('gc-input'), skip = $('gc-skip');
+            g.pos = data.index;
             if (prog) prog.textContent = Math.min(data.index + 1, data.total) + ' / ' + data.total;
             if (data.code) {
                 if (img) { img.src = '/api/maps/country/' + encodeURIComponent(data.code) + '.svg'; img.classList.remove('hidden'); }
                 if (done) done.classList.add('hidden');
                 if (input) { input.value = ''; input.disabled = false; input.focus(); }
+                if (skip) skip.classList.remove('hidden');
+                paintSkip(data.skip);
+                prefetch(data.next); // so the next map is already there after a correct guess / skip
             } else {
                 if (img) img.classList.add('hidden');
-                if (done) { done.textContent = "You've cleared the set!"; done.classList.remove('hidden'); }
+                if (done) { done.textContent = "You've reached the end of the set!"; done.classList.remove('hidden'); }
                 if (input) input.disabled = true;
+                if (skip) skip.classList.add('hidden');
             }
         } else if (type === 'score') {
             g.counts[data.id] = data.count;
+            if (currentUser && data.id === currentUser._id) feedback('✓ Correct!', 'text-online');
+        } else if (type === 'reject') {
+            feedback('✗ Not ' + data.value + ' — try again', 'text-red-400');
+            const input = $('gc-input');
+            if (input) {
+                input.classList.add('border-red-400');
+                input.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-6px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(0)' }], { duration: 220 });
+                setTimeout(() => { const i = $('gc-input'); if (i) i.classList.remove('border-red-400'); }, 600);
+                input.select();
+            }
+        } else if (type === 'skipvote') {
+            if (data.pos !== g.pos) return; // someone else's map, not the one I'm on
+            const mine = currentUser && data.id === currentUser._id;
+            paintSkip({ pos: data.pos, have: data.have, need: data.need, voted: mine ? true : !!(g.skip && g.skip.voted) });
         }
     }
     function scoreboardValue(id) { return String((matchState.gc && matchState.gc.counts[id]) || 0); }
@@ -1236,6 +1293,12 @@ function gcSubmit() {
     if (!input || input.disabled || !input.value.trim()) return;
     sendAction({ type: 'guess', value: input.value.trim() });
     input.value = '';
+}
+function gcSkip() {
+    const btn = $('gc-skip');
+    if (!btn || btn.disabled) return;
+    sendAction({ type: 'skip' });
+    btn.disabled = true; // the server answers with the vote count
 }
 
 const WikiUI = (() => {

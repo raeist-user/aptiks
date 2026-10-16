@@ -3,7 +3,11 @@
 // which country is "up" and judges answers) but moves through it at their own
 // pace: guess correctly, get the next one immediately. A shared timer ends
 // the match for everyone at once; the live scoreboard is just each player's
-// current index, which is what makes the race visible ("who's ahead").
+// solved count, which is what makes the race visible ("who's ahead").
+//
+// Skip: stuck on a map? Press Skip. A map is only skipped when every human
+// still playing has either voted to skip it or already moved past it (bots
+// never block). Skipping scores nothing — it just moves you on.
 const BaseGame = require('../BaseGame');
 const { shuffle } = require('../util');
 const { normalize } = require('./spellthemost');
@@ -27,9 +31,11 @@ class GuessCountry extends BaseGame {
       this.lookup.set(normalize(item.name), i);
       for (const al of item.aliases || []) this.lookup.set(normalize(al), i);
     });
-    this.index = {};    // id -> how many they've solved (== which silhouette they're on)
+    this.index = {};    // id -> which map they're on (position in the sequence)
+    this.score = {};    // id -> how many they've solved (skips don't count)
     this.solvedAt = {}; // id -> ms of last correct guess
-    for (const p of this.players) { this.index[p.id] = 0; this.solvedAt[p.id] = 0; }
+    this.skipVotes = new Map(); // position -> Set of human ids who want to skip it
+    for (const p of this.players) { this.index[p.id] = 0; this.score[p.id] = 0; this.solvedAt[p.id] = 0; }
   }
 
   publicInit() {
@@ -50,22 +56,62 @@ class GuessCountry extends BaseGame {
 
   sendCurrent(pid) {
     const c = this.current(pid);
+    const next = this.sequence[this.index[pid] + 1];
     // "code" is the ISO alpha-2 code; the frontend loads the themed globe from /api/maps/country/<code>.svg.
-    this.env.emitTo(pid, 'country', { index: this.index[pid], total: this.sequence.length, code: c ? c.code : null });
+    // "next" lets the browser fetch the following map ahead of time so there is no wait after a correct guess.
+    this.env.emitTo(pid, 'country', {
+      index: this.index[pid], total: this.sequence.length, code: c ? c.code : null, next: next ? next.code : null,
+      skip: c ? this.skipState(this.index[pid], pid) : null,
+    });
+  }
+
+  // How the skip button should look for map `pos`: how many humans agree, how many are needed, and whether `pid` already voted.
+  skipState(pos, pid) {
+    const humans = this.humans.filter((p) => !this.isForfeited(p.id));
+    const votes = this.skipVotes.get(pos) || new Set();
+    const have = humans.filter((p) => votes.has(p.id) || this.index[p.id] > pos).length;
+    return { pos, have, need: Math.max(1, humans.length), voted: pid ? votes.has(pid) : false };
+  }
+
+  // Skip a map when every human still playing voted for it or is already past it.
+  checkSkips() {
+    for (const [pos, votes] of [...this.skipVotes]) {
+      const humans = this.humans.filter((p) => !this.isForfeited(p.id));
+      const agreed = humans.length > 0 && humans.every((p) => votes.has(p.id) || this.index[p.id] > pos);
+      if (!agreed) continue;
+      this.skipVotes.delete(pos);
+      for (const p of humans) {
+        if (this.index[p.id] === pos && votes.has(p.id)) { this.index[p.id]++; this.sendCurrent(p.id); }
+      }
+    }
   }
 
   handle(pid, msg) {
-    if (this.state !== 'running' || !msg || msg.type !== 'guess' || this.isForfeited(pid)) return;
+    if (this.state !== 'running' || !msg || this.isForfeited(pid)) return;
     if (!(pid in this.index)) return;
     const want = this.current(pid);
     if (!want) return;
+
+    if (msg.type === 'skip') {
+      const player = this.players.find((p) => p.id === pid);
+      if (!player || player.isBot) return;
+      const pos = this.index[pid];
+      if (!this.skipVotes.has(pos)) this.skipVotes.set(pos, new Set());
+      this.skipVotes.get(pos).add(pid);
+      this.env.emit('skipvote', { id: pid, ...this.skipState(pos) });
+      this.checkSkips();
+      return;
+    }
+
+    if (msg.type !== 'guess') return;
     const guessedIndex = this.lookup.get(normalize(msg.value));
-    if (guessedIndex !== this.index[pid]) { this.env.emitTo(pid, 'reject', { value: msg.value }); return; }
+    if (guessedIndex !== this.index[pid]) { this.env.emitTo(pid, 'reject', { value: String(msg.value ?? '').slice(0, 60) }); return; }
     this.index[pid]++;
+    this.score[pid]++;
     this.solvedAt[pid] = this.env.now() - this.startedAt;
-    this.env.emit('score', { id: pid, count: this.index[pid] });
-    if (this.index[pid] >= this.sequence.length) { this.env.emitTo(pid, 'country', { index: this.index[pid], total: this.sequence.length, code: null }); return; } // ran out; they wait for time to end
-    this.sendCurrent(pid);
+    this.env.emit('score', { id: pid, count: this.score[pid] });
+    this.sendCurrent(pid); // sends code:null when they've run out; they wait for time to end
+    this.checkSkips();     // someone waiting on this map may now be free to skip
   }
 
   // ── Bots ─────────────────────────────────────────────────────────────────
@@ -91,15 +137,16 @@ class GuessCountry extends BaseGame {
     if (this.state === 'ended') return;
     this.state = 'ended';
     this.env.cancel(this.timer);
-    const entries = this.players.map((p) => ({ id: p.id, count: this.index[p.id], ms: this.solvedAt[p.id] }));
+    const entries = this.players.map((p) => ({ id: p.id, count: this.score[p.id], ms: this.solvedAt[p.id] }));
     const ranked = this.rank(entries, (a, b) => b.count - a.count || a.ms - b.ms);
     this.env.finish(ranked.map((r) => ({ id: r.id, rank: r.rank, score: r.count, detail: {} })));
   }
 
   snapshot() {
-    return { total: this.sequence.length, index: this.index };
+    return { total: this.sequence.length, index: this.index, score: this.score };
   }
 }
 
 GuessCountry.id = 'guesscountry';
+GuessCountry.codes = COUNTRIES.map((c) => c.code); // used to pre-draw the maps when the server starts
 module.exports = GuessCountry;

@@ -7,15 +7,16 @@ const fs = require('fs');
 const path = require('path');
 
 // Aptiks theme (same values as the tailwind.config in public/home.html).
+// Lighter than the page greys on purpose, so the globe stands out on the dark background.
 const THEME = {
-  sea: '#1E1E1E',        // input-bg   — the globe itself
-  land: '#3A3A3A',       // border-color — every other country
-  landBorder: '#1E1E1E', // thin gaps between countries
-  chosen: '#E2B714',     // accent     — the country to guess
-  chosenLine: '#9C7F0E', // darker accent outline
-  lake: '#1E1E1E',
-  graticule: '#747474',  // text-muted
-  rim: '#3A3A3A',
+  sea: '#2E2E2E',        // the globe itself (page is #171717, cards #252525)
+  land: '#7A7A7A',       // every other country
+  landBorder: '#2E2E2E', // thin gaps between countries
+  chosen: '#E2B714',     // accent — the country to guess
+  chosenLine: '#FFF0A0', // light outline so it pops against the grey
+  lake: '#2E2E2E',
+  graticule: '#B5B5B5',
+  rim: '#9A9A9A',
 };
 const DIAMETER = 550;
 
@@ -66,13 +67,19 @@ function mainland(feature, d3geo) {
 }
 
 const GRADIENT = [[0, 0], [0.5, 0.006], [0.56, 0.009], [0.64, 0.017], [0.7, 0.039], [0.74, 0.055], [1, 0.142]]
-  .map(([o, a]) => `<stop offset="${o}" stop-color="#000" stop-opacity="${a * 2.5}"/>`).join('');
+  .map(([o, a]) => `<stop offset="${o}" stop-color="#000" stop-opacity="${(a * 1.2).toFixed(4)}"/>`).join('');
 
-const cache = new Map();
+const zlib = require('zlib');
+const cache = new Map(); // code -> Promise<{ svg, gz }> (a promise, so two requests for the same map share one render)
 
-/** SVG string for a country code (e.g. "FR"), or null when there is no shape for it. */
-async function countryGlobeSvg(code) {
-  if (cache.has(code)) return cache.get(code);
+/** { svg, gz } for a country code (e.g. "FR"), or null when there is no shape for it. Rendered once, then served from memory. */
+function getGlobe(code) {
+  if (!cache.has(code)) cache.set(code, render(code).catch((e) => { cache.delete(code); throw e; }));
+  return cache.get(code);
+}
+async function countryGlobeSvg(code) { return (await getGlobe(code))?.svg ?? null; }
+
+async function render(code) {
   const { countries, lakes, byCode } = loadWorld();
   const features = byCode.get(code);
   if (!features || !features.length) return null;
@@ -80,8 +87,8 @@ async function countryGlobeSvg(code) {
   const D = DIAMETER;
   const target = features.map((f) => mainland(f, d3geo)).sort((a, b) => d3geo.geoArea(b) - d3geo.geoArea(a))[0];
   const [lon, lat] = d3geo.geoCentroid(target);
-  const projection = d3geo.geoOrthographic().fitSize([D, D], { type: 'Sphere' }).rotate([-lon, -lat]).precision(0.5);
-  const path = d3geo.geoPath(projection);
+  const projection = d3geo.geoOrthographic().fitSize([D, D], { type: 'Sphere' }).rotate([-lon, -lat]).precision(1);
+  const path = d3geo.geoPath(projection).digits(1); // 1 decimal is plenty at this size and halves the file
   const selected = new Set(features);
   const draw = (list) => list.map((f) => { const d = path(f); return d ? `<path d="${d}"/>` : ''; }).join('');
 
@@ -102,14 +109,22 @@ async function countryGlobeSvg(code) {
 <defs><radialGradient id="shade" cx="${D * 0.48}" cy="${D * 0.35}" r="${D * 0.64}" gradientUnits="userSpaceOnUse">${GRADIENT}</radialGradient></defs>
 <circle cx="${D / 2}" cy="${D / 2}" r="${D / 2}" fill="${THEME.sea}"/>
 <g fill="${THEME.land}" stroke="${THEME.landBorder}" stroke-width="0.5" stroke-linejoin="round">${land}</g>
-<g fill="${THEME.chosen}" stroke="${THEME.chosenLine}" stroke-width="0.5" stroke-linejoin="round">${chosen}</g>
+<g fill="${THEME.chosen}" stroke="${THEME.chosenLine}" stroke-width="0.8" stroke-linejoin="round">${chosen}</g>
 <g fill="${THEME.lake}" stroke="none">${lakePaths}</g>
-<path d="${grat ?? ''}" fill="none" stroke="${THEME.graticule}" stroke-width="0.3" opacity="0.5"/>
+<path d="${grat ?? ''}" fill="none" stroke="${THEME.graticule}" stroke-width="0.4" opacity="0.4"/>
 ${ring}
 <circle cx="${D / 2}" cy="${D / 2}" r="${D / 2}" fill="url(#shade)" stroke="${THEME.rim}" stroke-width="1.5"/>
 </svg>`;
-  cache.set(code, svg);
-  return svg;
+  return { svg, gz: zlib.gzipSync(svg, { level: 9 }) };
 }
 
-module.exports = { countryGlobeSvg, availableCodes, THEME };
+/** Draw the given maps in the background (one per tick, so the server stays responsive) so the first player never waits. */
+async function warmUp(codes) {
+  loadWorld();
+  for (const code of codes) {
+    try { await getGlobe(code); } catch (e) { console.error('map warm-up failed for', code, e.message); }
+    await new Promise((r) => setImmediate(r));
+  }
+}
+
+module.exports = { countryGlobeSvg, getGlobe, warmUp, availableCodes, THEME };
